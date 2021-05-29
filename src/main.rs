@@ -39,9 +39,7 @@ impl Default for RCApp {
             result: Default::default(),
             log_output: Default::default(),
         };
-        result.iot_client.lock().unwrap().subscribe(Self::TOPIC.to_string(), QoS::AtMostOnce, |input| {
-            println!("{}", input);
-        });
+        result.iot_client.lock().unwrap().subscribe(Self::TOPIC.to_string(), QoS::AtMostOnce, callback);
         thread::sleep(time::Duration::from_secs(1));
         result
     }
@@ -103,6 +101,10 @@ impl epi::App for RCApp {
             });
         });
     }
+}
+
+fn callback(input: String) {
+    println!("{}", input);
 }
 
 
