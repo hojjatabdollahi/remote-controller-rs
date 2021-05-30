@@ -11,3 +11,7 @@ edition = "2018"
 aws-iot-device-sdk-rust = {git="https://github.com/arnstein/aws-iot-device-sdk-rust.git"}
 rumqttc = "0.5.0"
 eframe ="0.12"
+lazy_static = "1.4.0"
+serde_json = "1"
+serde = "1"
+serde_derive = "1"

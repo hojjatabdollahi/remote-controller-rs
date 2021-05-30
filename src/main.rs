@@ -1,8 +1,19 @@
 use aws_iot_device_sdk_rust::client;
-use eframe::{egui::{self, ScrollArea}, epi};
+use eframe::{
+    egui::{self, ScrollArea},
+    epi,
+};
+use lazy_static::{__Deref, lazy_static};
 use rumqttc::QoS;
-use std::{sync::{Arc, Mutex, mpsc::Receiver}, thread, time};
+use std::{
+    collections::VecDeque,
+    sync::{mpsc::Receiver, Arc, Mutex},
+    thread, time,
+};
 
+use serde_json;
+use serde_json::Value as JsonValue;
+use serde_derive::Deserialize;
 
 struct RCApp {
     label: String,
@@ -10,15 +21,15 @@ struct RCApp {
     sendbtn_enabled: bool,
     in_progress: Option<Receiver<Result<String, String>>>,
     result: Option<Result<String, String>>,
-    log_output: String,
+    log_output: Arc<Mutex<String>>,
 }
 
 impl RCApp {
     const CLIENT_ID: &'static str = "remote-controller-dashboard";
-    const CA_CERT: &'static str = "rootCA.pem";
-    const CLIENT_CERT: &'static str = "thingCert.crt";
-    const PRIVATE_KEY: &'static str = "privKey.key";
-    const IOT_ENDPOINT: &'static str = "endpoint.amazonaws.com";
+    const CA_CERT: &'static str = "/opt/greengrass/rootCA.pem";
+    const CLIENT_CERT: &'static str = "/opt/greengrass/thingCert.crt";
+    const PRIVATE_KEY: &'static str = "/opt/greengrass/privKey.key";
+    const IOT_ENDPOINT: &'static str = "ar0y46zddi7n5-ats.iot.us-east-1.amazonaws.com";
     const TOPIC: &'static str = "remote/homepc";
 }
 
@@ -26,20 +37,26 @@ impl Default for RCApp {
     fn default() -> Self {
         let result = Self {
             label: "this is the default".to_owned(),
-            iot_client : Arc::new(Mutex::new(client::AWSIoTClient::new(
-                Self::CLIENT_ID,
-                Self::CA_CERT,
-                Self::CLIENT_CERT,
-                Self::PRIVATE_KEY,
-                Self::IOT_ENDPOINT,
-            ).unwrap()))
-            ,
+            iot_client: Arc::new(Mutex::new(
+                client::AWSIoTClient::new(
+                    Self::CLIENT_ID,
+                    Self::CA_CERT,
+                    Self::CLIENT_CERT,
+                    Self::PRIVATE_KEY,
+                    Self::IOT_ENDPOINT,
+                )
+                .unwrap(),
+            )),
             sendbtn_enabled: true,
             in_progress: Default::default(),
             result: Default::default(),
-            log_output: Default::default(),
+            log_output: Arc::new(Mutex::new(Default::default())),
         };
-        result.iot_client.lock().unwrap().subscribe(Self::TOPIC.to_string(), QoS::AtMostOnce, callback);
+        result.iot_client.lock().unwrap().subscribe(
+            Self::TOPIC.to_string(),
+            QoS::AtMostOnce,
+            callback,
+        );
         thread::sleep(time::Duration::from_secs(1));
         result
     }
@@ -76,15 +93,22 @@ impl epi::App for RCApp {
                         let (sender, receiver) = std::sync::mpsc::channel();
                         self.in_progress = Some(receiver);
                         self.label = "Published".to_owned();
-                        let iotclient = Arc::clone(& self.iot_client);
+                        let iotclient = Arc::clone(&self.iot_client);
                         thread::spawn(move || {
-                            for i in 0..5 {
+                            for i in 0..15 {
                                 let payload = format!("{{\"test\": \"Hello world {}.\"}}", i);
                                 println!("Publish: {}", payload);
-                                iotclient.lock().unwrap().publish(Self::TOPIC.to_string(), QoS::AtMostOnce, &payload);
+                                iotclient.lock().unwrap().publish(
+                                    Self::TOPIC.to_string(),
+                                    QoS::AtMostOnce,
+                                    &payload,
+                                );
                                 thread::sleep(time::Duration::from_secs(1));
                             }
-                            iotclient.lock().unwrap().unsubscribe(Self::TOPIC.to_string());
+                            iotclient
+                                .lock()
+                                .unwrap()
+                                .unsubscribe(Self::TOPIC.to_string());
                             sender.send(Ok("done".to_owned())).unwrap();
                             repaint_singal.request_repaint();
                         });
@@ -96,7 +120,9 @@ impl epi::App for RCApp {
                 ui.separator();
 
                 ScrollArea::auto_sized().show(ui, |ui| {
-                    ui.code(&self.log_output);
+                    if let Ok(a) = self.log_output.lock() {
+                        ui.code(a.deref());
+                    }
                 });
             });
         });
@@ -105,10 +131,31 @@ impl epi::App for RCApp {
 
 fn callback(input: String) {
     println!("{}", input);
+    ARRAY.lock().unwrap().push_back(format!("{}\n",input));
 }
 
+lazy_static! {
+    static ref ARRAY: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+}
+
+#[derive(Debug, Deserialize)]
+struct Command {
+    command: String,
+    data: String,
+}
 
 fn main() {
+
+    let json_str = r#"
+        {
+            "command":"os",
+            "data":"ls"
+        }
+    "#;
+    let res1: JsonValue = serde_json::from_str(json_str).unwrap();
+    println!("{}", res1["command"]);
+    let res: Command = serde_json::from_str(json_str).unwrap();
+    println!("{}", res.command);
     let app = RCApp::default();
     let native_options = eframe::NativeOptions::default();
     eframe::run_native(Box::new(app), native_options);
